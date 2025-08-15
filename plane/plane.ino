@@ -10,7 +10,7 @@ RF24 radio(9, 10);
 const uint64_t pipeTX = 0xF0F0F0F0D2LL; // Plane TX -> Computer RX
 const uint64_t pipeRX = 0xF0F0F0F0E1LL; // Plane RX <- Computer TX
 const int voltageSamples = 10;
-//bool comfail = true;
+uint8_t mcusr_status;
 
 Servo servoAilL, servoAilR, servoElev, servoRudd, esc;
 MPU6050 mpu;
@@ -60,18 +60,19 @@ PIDController rollPID = {2.0, 0.1, 0.5, 0, 0, 0, 0};    // Roll stabilization
 PIDController pitchPID = {2.0, 0.1, 0.5, 0, 0, 0, 0};   // Pitch stabilization
 PIDController yawPID = {1.5, 0.05, 0.3, 0, 0, 0, 0};    // Yaw stabilization
 
-// Target angles (setpoints) - usually 0 for level flight
+// Target angles (setpoints)
 float rollTarget = 0.0;
 float pitchTarget = 0.0; 
-float yawTarget = 0.0;   // Can be updated for heading hold
+float yawTarget = 0.0;
 
 unsigned long lastSendTime = 0;
 unsigned long lastRecvTime = 0;
-const unsigned long interval = 50;  // 20 Hz
+const unsigned long interval = 50; 
 
 uint16_t txSeq = 0;
 uint16_t lastRxSeq = 0;
 
+//limits output to -45 to 45
 float calculatePID(PIDController *pid, float setpoint, float input, float dt) {
   float error = setpoint - input;
   
@@ -119,13 +120,11 @@ void failsafe() {
   lastGoodControl.throttle = 0;
   lastGoodControl.aileronL = 35;
   lastGoodControl.aileronR = -35;
-  lastGoodControl.elevator = -10;
+  lastGoodControl.elevator = 10;
   lastGoodControl.rudder = 0;
-
-  // Autostabilization during failsafe
   lastGoodControl.autostabilize = 1;
   
-  // Reset PID controllers to prevent integral windup
+
   rollPID.integral = 0;
   rollPID.previousError = 0;
   pitchPID.integral = 0;
@@ -184,8 +183,20 @@ void applyControls(const ControlPacket &c) {
 }
 
 void setup() {
-  wdt_enable(WDTO_4S);  
+  mcusr_status = MCUSR; // Read the status register
+  MCUSR = 0;           // Clear the status register 
   Serial.begin(115200);
+  bool wdR = false;
+
+  //may not work due to clearing
+  if (mcusr_status & (1 << WDRF)) {
+    Serial.println("Watchdog Reset Detected!");
+    wdR = true;
+  } else {
+    Serial.println("Other Reset (e.g., Power-on, External, Brown-out)");
+  }
+
+  wdt_enable(WDTO_4S); 
 
   servoAilL.attach(6);
   servoAilR.attach(7);
@@ -203,7 +214,15 @@ void setup() {
 
   Wire.begin();
   mpu.initialize();
+
+  //first time (ground) calibration
+  if (!wdR) {
+    mpu.CalibrateAccel();
+    mpu.CalibrateGyro();
+  }
+
   filter.begin(50);
+  
 
   radio.begin();
   radio.setChannel(90);
@@ -251,7 +270,7 @@ void loop() {
     // Read gyro
     int16_t ax, ay, az, gx, gy, gz;
     mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-
+    
     float lastVoltage = voltageReading();
     telemetry.voltage = lastVoltage;
     telemetry.seq = txSeq++;

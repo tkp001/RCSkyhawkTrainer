@@ -28,3 +28,9 @@ Parts Used:
 - 5V 5A UBEC
 - 2200mah 11.1V 3S Lipo battery
 - 2 NRF24L01+PA+LNA, 100uf 16V capacitors, resistors (100k, 10k)
+
+Links:
+- https://github.com/ElectronicCats/mpu6050/blob/master/examples/MPU6050_DMP6/MPU6050_DMP6.ino
+- https://www.youtube.com/watch?v=s-btyW70FOU
+- https://howtomechatronics.com/tutorials/arduino/arduino-wireless-communication-nrf24l01-tutorial/
+- https://howtomechatronics.com/tutorials/arduino/arduino-and-mpu6050-accelerometer-and-gyroscope-tutorial/

@@ -6,7 +6,7 @@ import sys
 import math
 
 # --- Quick Configuration ---
-SERIAL_PORT = 'COM11'  # ⚠️ Change this to your Arduino's serial port (e.g., '/dev/ttyACM0' on Linux, '/dev/cu.usbmodemXXXX' on macOS)
+SERIAL_PORT = 'COM11'  # Change this to your Arduino's serial port
 BAUD_RATE = 115200
 
 # --- Trim Configuration ---
@@ -431,10 +431,12 @@ def main():
     x_button_pressed_last_frame = False
     b_button_pressed_last_frame = False
     a_button_pressed_last_frame = False
+    l1_button_pressed_last_frame = False
     
     # System states
     engine_armed = False
     flaps_state = 0  # 0 = retracted, 1 = takeoff, 2 = landing
+    auto_calibration_pending = False  # Flag for one-time autostabilize=2 packet
     
     running = True
     
@@ -482,6 +484,14 @@ def main():
                 print(f"Flaps: {flaps_names[flaps_state]}")
             a_button_pressed_last_frame = a_button_pressed
 
+            # Handle L1 button for auto calibration (autostabilize = 2 for one packet)
+            l1_button_pressed = xboxController.get_button(4)  # L1 button is typically button 4
+            if l1_button_pressed and not l1_button_pressed_last_frame:
+                # Button was just pressed (rising edge)
+                auto_calibration_pending = True
+                print("Auto calibration sent")
+            l1_button_pressed_last_frame = l1_button_pressed
+
             # Map controller inputs to aircraft controls
             # Roll: Left stick X (-60 to +60 degrees)
             aileronL = int(left_stick_x * 60)   # Left aileron
@@ -527,8 +537,14 @@ def main():
             # If engine is disarmed, force throttle to 0
             throttle = int(throttle_rate) if engine_armed else 0
 
+            # Determine autostabilize value for this packet
+            autostabilize_to_send = autostabilize
+            if auto_calibration_pending:
+                autostabilize_to_send = 2
+                auto_calibration_pending = False  # Reset flag after one packet
+
             # Send data to Arduino
-            send_data(ser, autostabilize, throttle, aileronL, aileronR, elevator, rudder)
+            send_data(ser, autostabilize_to_send, throttle, aileronL, aileronR, elevator, rudder)
             
             # Receive data from Arduino
             received_data = receive_data(ser)

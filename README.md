@@ -25,6 +25,6 @@ Parts Used:
 - MPU6050 6 axis
 - 4 SG90 Servos
 - 1400 KV A2212 Motor + 40A ESC
-- 5A 5A UBEC
+- 5V 5A UBEC
 - 2200mah 11.1V 3S Lipo battery
 - 2 NRF24L01+PA+LNA, 100uf 16V capacitors, resistors (100k, 10k)

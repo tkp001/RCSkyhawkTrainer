@@ -23,8 +23,6 @@ uint8_t devStatus;
 uint16_t packetSize;    
 uint16_t fifoCount;     
 uint8_t fifoBuffer[64]; 
-bool quickCalibrated = false;
-float stableStart;
 
 Quaternion q;
 //VectorInt16 aaReal;
@@ -274,6 +272,7 @@ void setup() {
 
   Wire.begin();
   Wire.setClock(400000); // Fast I2C 
+  Wire.setWireTimeout(25000, true);
   Serial.begin(115200);
   bool wdR = false;
 
@@ -401,24 +400,12 @@ void loop() {
     applyControls(lastGoodControl);
   }
 
-  // // Quick gyro calibration if autostabilize == 2
-  // if (lastGoodControl.autostabilize == 2 && !quickCalibrated) {
-  //   // Wait until MPU is roughly level (stable)
-    
-  //     if (fabs(aRealX) < 0.05 && fabs(aRealY) < 0.05 && fabs(fabs(aRealZ)-1.0) < 0.05) {
-  //       if (stableStart == 0) stableStart = millis();
-  //       else if (millis() - stableStart > 500) { // 0.5s of stability
-  //         Serial.println("Quick gyro calibration...");
-  //         mpu.CalibrateGyro(6); // quick only
-  //         mpu.CalibrateAccel(6);
-  //         mpu.setXGyroOffset(-mpu.getRotationX());
-  //         mpu.setYGyroOffset(-mpu.getRotationY());
-  //         mpu.setZGyroOffset(-mpu.getRotationZ());
-  //         quickCalibrated = false;
-  //       }
-  //     } else stableStart = 0; // reset timer if not stable
-    
-  // }
+  // Quick gyro calibration if autostabilize == 2
+  if (lastGoodControl.autostabilize == 2) {
+    Serial.println("Quick gyro calibration...");
+    mpu.CalibrateGyro(6); // quick only
+    mpu.CalibrateAccel(6);
+  }
 
   //get MPU6050 data
   if (readMPU(yaw, pitch, roll, aRealX, aRealY, aRealZ)) {
@@ -428,6 +415,13 @@ void loop() {
     latestRealX = aRealX;
     latestRealY = aRealY;
     latestRealZ = aRealZ;
+  } else {
+    Wire.clearWireTimeoutFlag();
+  }
+
+  if (Wire.getWireTimeoutFlag()) {
+    Serial.print("MPU TIMEOUT");
+    mpu.initialize();
   }
 
   // Send telemetry at ~20Hz

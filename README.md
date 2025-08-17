@@ -33,3 +33,4 @@ Links:
 - https://www.youtube.com/watch?v=s-btyW70FOU
 - https://howtomechatronics.com/tutorials/arduino/arduino-wireless-communication-nrf24l01-tutorial/
 - https://howtomechatronics.com/tutorials/arduino/arduino-and-mpu6050-accelerometer-and-gyroscope-tutorial/
+- https://youtu.be/U3AHgk0SUoI?si=rI_dNsmJctV9-yjQ

@@ -17,8 +17,7 @@ Arduino (Plane)
 
 Plane Blueprint: In Repository
 
-Wiring Diagram
-- to be added
+Wiring Diagram: In Repository
 
 Parts Used:
 - 2 Ardunio Uno

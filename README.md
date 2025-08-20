@@ -21,6 +21,9 @@ Wiring Diagram: In Repository
 
 Parts Used:
 - 2 Ardunio Uno
+- Elegoo Protoshield v5
+- Mini breadboard
+- Xbox Controller (wired)
 - MPU6050 6 axis
 - 4 SG90 Servos
 - 1400 KV A2212 Motor + 40A ESC
@@ -28,7 +31,7 @@ Parts Used:
 - 2200mah 11.1V 3S Lipo battery
 - 2 NRF24L01+PA+LNA, 100uf 16V capacitors, resistors (100k, 10k)
 
-Links:
+Resources:
 - https://github.com/ElectronicCats/mpu6050/blob/master/examples/MPU6050_DMP6/MPU6050_DMP6.ino
 - https://www.youtube.com/watch?v=s-btyW70FOU
 - https://howtomechatronics.com/tutorials/arduino/arduino-wireless-communication-nrf24l01-tutorial/

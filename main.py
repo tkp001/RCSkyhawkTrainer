@@ -14,8 +14,8 @@ ELEVATOR_TRIM = 0  # Elevator trim adjustment (-30 to +30)
 RUDDER_TRIM = 0    # Rudder trim adjustment (-30 to +30)
 
 # --- Flaps Configuration ---
-FLAPS_TAKEOFF_OFFSET = 20  # Takeoff flaps: 20 degrees down
-FLAPS_LANDING_OFFSET = 10  # Landing flaps: 10 degrees down
+FLAPS_TAKEOFF_OFFSET = 40  # Takeoff flaps: 20 degrees down
+FLAPS_LANDING_OFFSET = 20  # Landing flaps: 10 degrees down
 
 # --- Pygame Configuration ---
 SCREEN_WIDTH = 1000
@@ -493,9 +493,9 @@ def main():
             l1_button_pressed_last_frame = l1_button_pressed
 
             # Map controller inputs to aircraft controls
-            # Roll: Left stick X (-60 to +60 degrees)
+            # Roll: Left stick X (-60 to +60 degrees) ALTERED FOR NOW
             aileronL = int(left_stick_x * 60)   # Left aileron
-            aileronR = int(left_stick_x * -60)  # Right aileron (opposite)
+            aileronR = int(left_stick_x * 60)  # Right aileron (opposite)
             
             # Pitch: Left stick Y (-30 to +30 degrees)
             elevator = int(-left_stick_y * 30)  # Negative because stick up = nose up = negative elevator
@@ -515,7 +515,7 @@ def main():
                 flaps_offset = FLAPS_LANDING_OFFSET
                 
             aileronL += flaps_offset
-            aileronR += flaps_offset
+            aileronR -= flaps_offset
             
             # Clamp aileron values to safe ranges
             aileronL = max(-90, min(90, aileronL))

@@ -153,10 +153,10 @@ float voltageReading() {
 void failsafe() {
   lastGoodControl.throttle = 0;
   lastGoodControl.aileronL = 35;
-  lastGoodControl.aileronR = -35;
-  lastGoodControl.elevator = 10;
+  lastGoodControl.aileronR = 35;
+  lastGoodControl.elevator = 0;
   lastGoodControl.rudder = 0;
-  lastGoodControl.autostabilize = 0;
+  lastGoodControl.autostabilize = 1;
   
 
   rollPID.integral = 0;
@@ -191,9 +191,9 @@ void applyControls(const ControlPacket &c) {
       float yawCorrection = calculatePID(&yawPID, yawTarget, currentYaw, dt);
       
       // Mix manual input with stabilization (stab can do up to 15-30 deg auto)
-      finalAileronL = c.aileronL + constrain(rollCorrection, -30, 30);
-      finalAileronR = c.aileronR - constrain(rollCorrection, -30, 30);
-      finalElevator = c.elevator + constrain(pitchCorrection, -15, 15);
+      finalAileronL = c.aileronL + constrain(rollCorrection, -45, 45);
+      finalAileronR = c.aileronR + constrain(rollCorrection, -45, 45); // changed
+      finalElevator = c.elevator + constrain(pitchCorrection, -30, 30);
       //finalRudder = c.rudder + constrain(yawCorrection, -15, 15);
       
       rollPID.lastTime = currentTime;
@@ -205,8 +205,8 @@ void applyControls(const ControlPacket &c) {
   // Constrain final control values
   finalAileronL = constrain(finalAileronL, -60, 60);
   finalAileronR = constrain(finalAileronR, -60, 60);
-  finalElevator = constrain(finalElevator, -30, 30);
-  finalRudder = constrain(finalRudder, -30, 30);
+  finalElevator = constrain(finalElevator, -45, 45);
+  finalRudder = constrain(finalRudder, -45, 45);
 
   //TO ADD: WRITE TO special telemetry variables FOR AUTOSTAB VALUES (true servo value not sent) IF APPLIED
 

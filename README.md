@@ -61,3 +61,4 @@ Arduino (Plane)
 - NRF24L01 Wiring: https://howtomechatronics.com/tutorials/arduino/arduino-wireless-communication-nrf24l01-tutorial/
 - MPU6050 Wiring: https://howtomechatronics.com/tutorials/arduino/arduino-and-mpu6050-accelerometer-and-gyroscope-tutorial/
 - Good Linkage Geometry for Control Surfaces: https://youtu.be/U3AHgk0SUoI?si=rI_dNsmJctV9-yjQ
+- Cessna CAD Model: https://cad.onshape.com/documents/fbee1c690bef929a04a1c229/w/799ae59c6a1b1904c36a38a1/e/53bef2ebf86cd061f18f0ac2?renderMode=0&uiState=68a7b4c42b0a2405962bdc53

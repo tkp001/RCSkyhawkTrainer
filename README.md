@@ -31,6 +31,7 @@ Arduino (Computer)
 Arduino (Plane)
 - Recieve plane commands to execute
 - Send back telemetry data like gyroscope and battery voltage
+- PID controller for autostabilization via gyroscope
 
 ## Materials Used: 
 - Foamboard

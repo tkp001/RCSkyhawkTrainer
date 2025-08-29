@@ -9,6 +9,9 @@ import math
 SERIAL_PORT = 'COM11'  # Change this to your Arduino's serial port
 BAUD_RATE = 115200
 
+# --- Deadzone Configuration ---
+THROTTLE_DEADZONE = 0.2  # Throttle deadzone (0.0 to 1.0)
+
 # --- Trim Configuration ---
 ELEVATOR_TRIM = 0  # Elevator trim adjustment (-30 to +30)
 RUDDER_TRIM = 0    # Rudder trim adjustment (-30 to +30)
@@ -268,19 +271,19 @@ def draw_telemetry(screen, font, received_data, left_stick_x, left_stick_y, righ
     screen.blit(text, (20, y_offset))
     y_offset += line_height
     
-    text = font.render(f"Roll Input: {left_stick_x:.3f}", True, GREEN)
+    text = font.render(f"Roll Input: {right_stick_x:.3f}", True, GREEN)
     screen.blit(text, (20, y_offset))
     y_offset += line_height
     
-    text = font.render(f"Pitch Input: {left_stick_y:.3f}", True, GREEN)
+    text = font.render(f"Pitch Input: {right_stick_y:.3f}", True, GREEN)
     screen.blit(text, (20, y_offset))
     y_offset += line_height
     
-    text = font.render(f"Yaw Input: {right_stick_x:.3f}", True, GREEN)
+    text = font.render(f"Yaw Input: {left_stick_x:.3f}", True, GREEN)
     screen.blit(text, (20, y_offset))
     y_offset += line_height
     
-    text = font.render(f"Throttle Rate: {right_stick_y:.3f}", True, GREEN)
+    text = font.render(f"Throttle Rate: {-left_stick_y:.3f}", True, GREEN)
     screen.blit(text, (20, y_offset))
     y_offset += line_height
     
@@ -494,14 +497,14 @@ def main():
 
             # Map controller inputs to aircraft controls
             # Roll: Left stick X (-60 to +60 degrees) ALTERED FOR NOW
-            aileronL = int(left_stick_x * 60)   # Left aileron
-            aileronR = int(left_stick_x * 60)  # Right aileron (opposite)
+            aileronL = int(right_stick_x * 60)   # Left aileron
+            aileronR = int(right_stick_x * 60)  # Right aileron (opposite)
             
             # Pitch: Left stick Y (-30 to +30 degrees)
-            elevator = int(-left_stick_y * 30)  # Negative because stick up = nose up = negative elevator
+            elevator = int(-right_stick_y * 30)  # Negative because stick up = nose up = negative elevator
             
             # Yaw: Right stick X (-30 to +30 degrees)
-            rudder = int(right_stick_x * 30)
+            rudder = int(left_stick_x * 30)
             
             # Apply trim adjustments
             elevator += ELEVATOR_TRIM
@@ -526,7 +529,12 @@ def main():
             rudder = max(-30, min(30, rudder))
             
             # Throttle: Right stick Y controls throttle rate (not direct control)
-            throttle_input = -right_stick_y  # Negative because stick up = increase throttle
+            throttle_input = -left_stick_y  # Negative because stick up = increase throttle
+            
+            # Apply deadzone to throttle input
+            if abs(throttle_input) < THROTTLE_DEADZONE:
+                throttle_input = 0
+                
             throttle_change = round(throttle_input, 1) * max_throttle_change_rate
 
             # Update throttle rate with limits

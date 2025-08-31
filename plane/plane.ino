@@ -12,6 +12,7 @@ const uint64_t pipeTX = 0xF0F0F0F0D2LL; // Plane TX -> Computer RX
 const uint64_t pipeRX = 0xF0F0F0F0E1LL; // Plane RX <- Computer TX
 const int voltageSamples = 10;
 uint8_t mcusr_status;
+bool failsafeActivated;
 
 Servo servoAilL, servoAilR, servoElev, servoRudd, esc;
 
@@ -152,10 +153,12 @@ float voltageReading() {
 
 void failsafe() {
   lastGoodControl.throttle = 0;
-  lastGoodControl.aileronL = 35;
-  lastGoodControl.aileronR = 35;
-  lastGoodControl.elevator = 0;
+  // lastGoodControl.aileronL = 35;
+  // lastGoodControl.aileronR = 35;
+  // lastGoodControl.elevator = 0;
   lastGoodControl.rudder = 0;
+  rollTarget = 35;
+  pitchTarget = 5;
   lastGoodControl.autostabilize = 1;
   
 
@@ -175,7 +178,25 @@ void applyControls(const ControlPacket &c) {
   int8_t finalElevator = c.elevator;
   int8_t finalRudder = c.rudder;
   
-  if (c.autostabilize) {
+  //Quick Actions
+  // Manual calibration if on ground (throttle 0)
+  if (c.autostabilize == 2 && c.throttle == 0) {
+    Serial.println("Quick gyro calibration...");
+    finalAileronL = 35; //visual indicator
+    finalAileronR = 35;
+    mpu.CalibrateGyro(6); // quick only
+    mpu.CalibrateAccel(6);
+  }
+
+  // Hold to auto level if autostabilize == 3
+  if (c.autostabilize == 3) {
+    Serial.println("Leveling.");
+    rollTarget = 0.0;
+    pitchTarget = 0.0;
+    yawTarget = 0.0;
+  }
+
+  if (c.autostabilize > 0) {
     unsigned long currentTime = millis();
     float dt = (currentTime - rollPID.lastTime) / 1000.0;
     
@@ -183,6 +204,19 @@ void applyControls(const ControlPacket &c) {
       float currentRoll = telemetry.roll;
       float currentPitch = telemetry.pitch;
       float currentYaw = telemetry.yaw;
+
+      if (!failsafeActivated && c.autostabilize == 1) {
+        //hold flight when no input 
+        if (c.aileronR < 5 && c.aileronR > -5) {
+        rollTarget = currentRoll;
+        }
+        if (c.elevator < 5 && c.elevator > -5) {
+          pitchTarget = currentPitch;
+        }
+        if (c.rudder < 5 && c.rudder > -5) {
+          yawTarget = currentYaw;
+        }
+      }
 
       
       // Calculate PID corrections
@@ -219,28 +253,46 @@ void applyControls(const ControlPacket &c) {
 }
 
 bool readMPU(float &yaw, float &pitch, float &roll, float &aRealX, float &aRealY, float &aRealZ) {
-  wdt_reset();
-  if (!dmpReady || !mpuInterrupt) return false; // No new data yet
-  mpuInterrupt = false;
-
-  mpuIntStatus = mpu.getIntStatus();
-  fifoCount = mpu.getFIFOCount();
-
-  // Overflow check
-  if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
-    mpu.resetFIFO();
+  if (!dmpReady) return false;
+  
+  // Check for new data
+  if (!mpuInterrupt && fifoCount < packetSize) {
     return false;
   }
-
-  if (fifoCount < packetSize) return false; // Not enough data yet
-
-  // Read packet
-  mpu.getFIFOBytes(fifoBuffer, packetSize);
-  mpu.dmpGetQuaternion(&q, fifoBuffer);
-  mpu.dmpGetGravity(&gravity, &q);
-  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-  mpu.dmpGetAccel(&aa, fifoBuffer);
-  mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+  
+  mpuInterrupt = false;
+  mpuIntStatus = mpu.getIntStatus();
+  fifoCount = mpu.getFIFOCount();
+  
+  // Aggressive overflow handling
+  if ((mpuIntStatus & 0x10) || fifoCount >= 1000) {
+    mpu.resetFIFO();
+    Serial.println("FIFO Reset");
+    return false;
+  }
+  
+  // Process ALL packets to prevent backup
+  while (fifoCount >= packetSize) {
+    mpu.getFIFOBytes(fifoBuffer, packetSize);
+    
+    // Process the packet
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+    mpu.dmpGetAccel(&aa, fifoBuffer);
+    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+    
+    // Get updated count
+    fifoCount = mpu.getFIFOCount();
+    
+    // Safety break - don't loop forever
+    static unsigned long loopStart = millis();
+    if (millis() - loopStart > 10) {
+      mpu.resetFIFO();
+      Serial.println("FIFO Loop Break");
+      break;
+    }
+  }
 
   yaw   = ypr[0] * 180 / M_PI;
   pitch = ypr[1] * 180 / M_PI;
@@ -271,7 +323,7 @@ void setup() {
   MCUSR = 0; // Clear the status register
 
   Wire.begin();
-  Wire.setClock(400000); // Fast I2C 
+  Wire.setClock(100000); // I2C 
   Wire.setWireTimeout(25000, true);
   Serial.begin(115200);
   bool wdR = false;
@@ -310,6 +362,8 @@ void setup() {
   
   //MPU6050 Init All
   Serial.println(F("Initializing I2C devices..."));
+  mpu.initialize();
+  mpu.reset();
   mpu.initialize();
   pinMode(interrupt_pin, INPUT);
 
@@ -358,6 +412,13 @@ void setup() {
   //NRF24L01 SETUP
   //wdt_reset();
   radio.begin();
+
+  if (!radio.isChipConnected()) {
+    Serial.println("NRF24L01+ not detected!");
+  } else {
+    Serial.println("NRF24L01+ detected");
+  }
+
   radio.setChannel(90);
   radio.setDataRate(RF24_1MBPS);
   radio.setPALevel(RF24_PA_LOW);
@@ -365,7 +426,7 @@ void setup() {
   radio.openReadingPipe(1, pipeRX);
   radio.startListening();
 
-  wdt_enable(WDTO_4S);
+  wdt_enable(WDTO_2S);
 }
 
 void loop() {
@@ -395,16 +456,12 @@ void loop() {
 
   //failsafe
   if (now - lastRecvTime > 1000) {
+    failsafeActivated = true;
     failsafe();
     // Apply failsafe controls
     applyControls(lastGoodControl);
-  }
-
-  // Quick gyro calibration if autostabilize == 2
-  if (lastGoodControl.autostabilize == 2) {
-    Serial.println("Quick gyro calibration...");
-    mpu.CalibrateGyro(6); // quick only
-    mpu.CalibrateAccel(6);
+  } else {
+    failsafeActivated = false;
   }
 
   //get MPU6050 data
@@ -421,6 +478,10 @@ void loop() {
 
   if (Wire.getWireTimeoutFlag()) {
     Serial.print("MPU TIMEOUT");
+    mpu.resetFIFO(); //added
+    mpu.reset();
+    mpu.initialize();
+    mpu.reset();
     mpu.initialize();
   }
 

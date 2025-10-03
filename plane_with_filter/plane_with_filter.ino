@@ -3,7 +3,8 @@
 #include <Servo.h>
 //#include <ServoTimer2.h>
 #include <Wire.h>
-#include <MPU6050_6Axis_MotionApps20.h>
+#include <MPU6050.h>
+#include <MadgwickAHRS.h>
 #include "I2Cdev.h"
 #include <avr/io.h>
 #include <avr/wdt.h>
@@ -18,24 +19,28 @@ bool failsafeActivated;
 Servo servoAilL, servoAilR, servoElev, servoRudd;
 Servo esc;
 
-MPU6050 mpu;
-int const interrupt_pin = 2;
-bool dmpReady = false;
-uint8_t mpuIntStatus;   
-uint8_t devStatus;      
-uint16_t packetSize;    
-uint16_t fifoCount;     
-uint8_t fifoBuffer[64]; 
+MPU6050 mpu;    
+// uint16_t packetSize;    
+// uint16_t fifoCount;     
+// uint8_t fifoBuffer[64]; 
 
-Quaternion q;
+Madgwick filter; // Madgwick filter instance
+unsigned long lastFilterUpdate = 0;
+float gyroOffsetX = 0, gyroOffsetY = 0, gyroOffsetZ = 0;
+bool gyroCalibrated = false;
+
+// Quaternion q;
 //VectorInt16 aaReal;
 //VectorInt16 aaWorld;
-VectorFloat gravity;
-VectorInt16 aa;
-VectorInt16 aaReal;
-float yaw, pitch, roll, aRealX, aRealY, aRealZ;
-static float latestYaw, latestPitch, latestRoll, latestRealX, latestRealY, latestRealZ;
-float ypr[3];
+// VectorFloat gravity;
+// VectorInt16 aa;
+// VectorInt16 aaReal;
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
+float yaw, pitch, roll, accelX, accelY, accelZ;
+static float latestYaw, latestPitch, latestRoll, latestAccelX, latestAccelY, latestAccelZ;
+int8_t finalAileronL, finalAileronR, finalElevator, finalRudder;
+// float ypr[3];
 
 struct ControlPacket {
   uint16_t seq;
@@ -69,9 +74,6 @@ struct PIDController {
   float lastSetpoint;
   float dTermFiltered;
 };
-
-volatile bool mpuInterrupt = false;
-void dmpDataReady() { mpuInterrupt = true; }
 
 uint8_t calculateChecksum(uint8_t *data, size_t length) {
   uint8_t sum = 0;
@@ -174,36 +176,33 @@ void failsafe() {
   lastGoodControl.throttle = 0;
   lastGoodControl.aileronL = 0;
   lastGoodControl.aileronR = 0;
-  lastGoodControl.elevator = 30;
-  lastGoodControl.rudder = 5;
-  //rollTarget = 35;
-  //pitchTarget = 5;
-  lastGoodControl.autostabilize = 0;
-  
+  lastGoodControl.elevator = 0;
+  lastGoodControl.rudder = 0;
+  lastGoodControl.autostabilize = 4; //1 before
 
-  rollPID.integral = 0;
-  rollPID.previousError = 0;
-  pitchPID.integral = 0;
-  pitchPID.previousError = 0;
-  yawPID.integral = 0;
-  yawPID.previousError = 0;
+  // rollPID.integral = 0;
+  // rollPID.previousError = 0;
+  // pitchPID.integral = 0;
+  // pitchPID.previousError = 0;
+  // yawPID.integral = 0;
+  // yawPID.previousError = 0;
 
   //Serial.println("Failsafe: no valid control packet");
 }
 
 void applyControls(const ControlPacket &c) {
-  int8_t finalAileronL = c.aileronL;
-  int8_t finalAileronR = c.aileronR;
-  int8_t finalElevator = c.elevator;
-  int8_t finalRudder = c.rudder;
+  //Variables made public
+  finalAileronL = c.aileronL;
+  finalAileronR = c.aileronR;
+  finalElevator = c.elevator;
+  finalRudder = c.rudder;
   
   //Quick Actions
   // Manual calibration if on ground (throttle 0)
   if (c.autostabilize == 2 && c.throttle == 0) {
     // Serial.println("Quick gyro calibration...");
     esc.detach();
-    mpu.CalibrateGyro(6); // quick only
-    mpu.CalibrateAccel(6);
+    manualCalibrateGyro();
     esc.attach(15);
   }
 
@@ -220,30 +219,92 @@ void applyControls(const ControlPacket &c) {
     float dt = (currentTime - rollPID.lastTime) / 1000.0;
     
     if (dt > 0.01) {  // Only update at reasonable intervals
-      float currentRoll = telemetry.roll;
-      float currentPitch = telemetry.pitch;
-      float currentYaw = telemetry.yaw;
+      float currentRoll = latestRoll; //telemetry.roll
+      float currentPitch = latestPitch;
+      float currentYaw = latestYaw;
+      static unsigned long failsafeStartTime = 0;
+      static bool failsafePIDReset = false;
 
-      if (!failsafeActivated && c.autostabilize == 1) {
-        //hold flight when no input 
-        if (c.aileronR < 5 && c.aileronR > -5) {
-        rollTarget = currentRoll;
-        }
-        if (c.elevator < 5 && c.elevator > -5) {
-          pitchTarget = currentPitch;
-        }
-        if (c.rudder < 5 && c.rudder > -5) {
-          yawTarget = currentYaw;
-        }
+      if (!failsafeActivated && c.autostabilize != 4) {
+        failsafePIDReset = false;  // Reset flag when exiting failsafe
+        failsafeStartTime = 0;
       }
 
-      
+      if (c.autostabilize == 4 || failsafeActivated) {  // Failsafe mode
+        // static unsigned long failsafeStartTime = 0;
+        // static bool failsafePIDReset = false;
+        
+        if (!failsafePIDReset) {
+            // Reset PIDs once at failsafe start
+            rollPID.integral = 0; rollPID.previousError = 0;
+            pitchPID.integral = 0; pitchPID.previousError = 0;
+            yawPID.integral = 0; yawPID.previousError = 0;
+            failsafeStartTime = millis();
+            failsafePIDReset = true;
+        }
+        
+        unsigned long failsafeTime = millis() - failsafeStartTime;
+        if (failsafeTime < 3000) {
+            rollTarget = 0.0;    // Level
+            pitchTarget = -5.0;  // Nose down
+        } else {
+            rollTarget = 20.0;   // Spiral
+            pitchTarget = -2.0;
+        }
+        yawTarget = 0.0;
+
+      } else if (c.autostabilize == 1) {
+          // Static variables to remember targets and hold states
+          static float savedRollTarget = 0;
+          static float savedPitchTarget = 0; 
+          static float savedYawTarget = 0;
+          static bool rollHolding = false;
+          static bool pitchHolding = false;
+          static bool yawHolding = false;
+          
+          // ROLL HOLD - Fix: use average of both ailerons
+          float rollInput = (c.aileronL + c.aileronR) / 2.0;
+          if (abs(rollInput) < 5) {  // Ailerons centered
+              if (!rollHolding) {
+                  savedRollTarget = currentRoll;  // Save current angle once
+                  rollHolding = true;
+              }
+              rollTarget = savedRollTarget;  // Use saved target
+          } else {
+              rollHolding = false;  // Exit hold mode when stick moves
+          }
+          
+          // PITCH HOLD
+          if (abs(c.elevator) < 5) {  // Elevator centered
+              if (!pitchHolding) {
+                  savedPitchTarget = currentPitch;  // Save current angle once
+                  pitchHolding = true;
+              }
+              pitchTarget = savedPitchTarget;  // Use saved target
+          } else {
+              pitchHolding = false;  // Exit hold mode when stick moves
+          }
+          
+
+          // YAW HOLD
+          if (abs(c.rudder) < 5) {  // Rudder centered
+              if (!yawHolding) {
+                  savedYawTarget = currentYaw;    // Save current angle once
+                  yawHolding = true;
+              }
+              yawTarget = savedYawTarget;  // Use saved target
+          } else {
+              yawHolding = false;  // Exit hold mode when stick moves
+          }
+      }
+
       // Calculate PID corrections
       float rollCorrection = calculatePID(&rollPID, rollTarget, currentRoll, dt);
       float pitchCorrection = calculatePID(&pitchPID, pitchTarget, currentPitch, dt);
       float yawCorrection = calculatePID(&yawPID, yawTarget, currentYaw, dt);
       
       // Mix manual input with stabilization (stab can do up to 15-30 deg auto)
+      //Aileron mapping is correct, it has worked through testing
       finalAileronL = c.aileronL + constrain(rollCorrection, -45, 45);
       finalAileronR = c.aileronR + constrain(rollCorrection, -45, 45); // changed
       finalElevator = c.elevator + constrain(pitchCorrection, -30, 30);
@@ -261,8 +322,6 @@ void applyControls(const ControlPacket &c) {
   finalElevator = constrain(finalElevator, -45, 45);
   finalRudder = constrain(finalRudder, -45, 45);
 
-  //TO ADD: WRITE TO special telemetry variables FOR AUTOSTAB VALUES (true servo value not sent) IF APPLIED
-
   // Apply final control values
   esc.writeMicroseconds(map(c.throttle, 0, 100, 1000, 2000));
   servoAilL.write(90 + finalAileronL);
@@ -271,56 +330,79 @@ void applyControls(const ControlPacket &c) {
   servoRudd.write(90 + finalRudder);
 }
 
-bool readMPU(float &yaw, float &pitch, float &roll, float &aRealX, float &aRealY, float &aRealZ) {
-  if (!dmpReady) return false;
+bool readMPU(float &yaw, float &pitch, float &roll, float &accelX, float &accelY, float &accelZ) {
+  unsigned long currentTime = millis();
   
-  // Check for new data
-  if (!mpuInterrupt && fifoCount < packetSize) {
-    return false;
-  }
-  
-  mpuInterrupt = false;
-  mpuIntStatus = mpu.getIntStatus();
-  fifoCount = mpu.getFIFOCount();
-  
-  // Aggressive overflow handling
-  if ((mpuIntStatus & 0x10) || fifoCount >= 1000) {
-    mpu.resetFIFO();
-    // Serial.println("FIFO Reset");
-    return false;
-  }
-  
-  // Process ALL packets to prevent backup
-  while (fifoCount >= packetSize) {
-    mpu.getFIFOBytes(fifoBuffer, packetSize);
-    
-    // Process the packet
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-    mpu.dmpGetAccel(&aa, fifoBuffer);
-    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-    
-    // Get updated count
-    fifoCount = mpu.getFIFOCount();
-    
-    // Safety break - don't loop forever
-    static unsigned long loopStart = millis();
-    if (millis() - loopStart > 10) {
-      mpu.resetFIFO();
-      // Serial.println("FIFO Loop Break");
-      break;
-    }
-  }
+  // Calculate delta time in seconds
+  float dt = (currentTime - lastFilterUpdate) / 1000.0f;
+  if (dt <= 0) dt = 0.01f; // Prevent divide by zero
+  lastFilterUpdate = currentTime;
 
-  yaw   = ypr[0] * 180 / M_PI;
-  pitch = ypr[1] * 180 / M_PI;
-  roll  = ypr[2] * 180 / M_PI;
-  aRealX = aaReal.x / 16384.0f;
-  aRealY = aaReal.y / 16384.0f;
-  aRealZ = aaReal.z / 16384.0f;
+  // Read raw sensor data
+  int16_t ax, ay, az;
+  int16_t gx, gy, gz;
   
-  return true;
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  
+  // Convert accelerometer readings to g-force (±2g range)
+  accelX = ax / 16384.0f;
+  accelY = ay / 16384.0f;  
+  accelZ = az / 16384.0f;
+  
+  // Convert gyroscope readings to degrees/second (±250°/s range) and apply calibration
+  float gyroX = (gx / 131.0f) - gyroOffsetX;
+  float gyroY = (gy / 131.0f) - gyroOffsetY;
+  float gyroZ = (gz / 131.0f) - gyroOffsetZ;
+  
+  // Update Madgwick filter (library expects degrees/second for gyro)
+  filter.updateIMU(gyroX, gyroY, gyroZ, accelX, accelY, accelZ);
+  
+  // Get Euler angles from filter
+  roll = filter.getRoll();
+  pitch = filter.getPitch();
+  yaw = filter.getYaw();
+  
+  return true;  // Always successful with raw readings
+}
+
+// ADD new calibration function to replace DMP calibration
+void manualCalibrateGyro() {
+    Serial.println("Calibrating gyroscope...");
+    
+    const int numSamples = 1000;
+    long gyroXSum = 0, gyroYSum = 0, gyroZSum = 0;
+    
+    for (int i = 0; i < numSamples; i++) {
+        int16_t ax, ay, az, gx, gy, gz;
+        mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+        
+        gyroXSum += gx;
+        gyroYSum += gy;
+        gyroZSum += gz;
+        
+        delay(1);
+        
+        // Show progress every 100 samples
+        if (i % 100 == 0) {
+            Serial.print(".");
+        }
+    }
+    Serial.println();
+    
+    // Calculate offsets in degrees/second
+    gyroOffsetX = (gyroXSum / numSamples) / 131.0f;
+    gyroOffsetY = (gyroYSum / numSamples) / 131.0f;
+    gyroOffsetZ = (gyroZSum / numSamples) / 131.0f;
+    
+    gyroCalibrated = true;
+    
+    Serial.print("Gyro offsets: X=");
+    Serial.print(gyroOffsetX);
+    Serial.print(", Y=");
+    Serial.print(gyroOffsetY);
+    Serial.print(", Z=");
+    Serial.println(gyroOffsetZ);
+    Serial.println("Gyro calibration complete!");
 }
 
 // //Pull arduino status
@@ -343,8 +425,8 @@ void setup() {
 
   Wire.begin();
   Wire.setClock(100000); // I2C 
-  Wire.setWireTimeout(25000, true);
-  Wire.clearWireTimeoutFlag();
+  // Wire.setWireTimeout(25000, true);
+  // Wire.clearWireTimeoutFlag();
   Serial.begin(115200);
   bool wdR = false;
 
@@ -365,13 +447,6 @@ void setup() {
   //   wdR = true;
   // }
 
-  //ATTACH SURFACES AND MOTOR
-  servoAilL.attach(6);
-  servoAilR.attach(7);
-  servoElev.attach(4);
-  servoRudd.attach(5);
-  esc.attach(15); //was D3 before mpu6050
-
   //failsafe();
 
   // Initialize PID timing
@@ -383,9 +458,11 @@ void setup() {
   //MPU6050 Init All
   Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
-  mpu.reset();
-  mpu.initialize();
-  pinMode(interrupt_pin, INPUT);
+  mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250); // ±250°/s
+  mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2); // ±2g
+  mpu.setDLPFMode(MPU6050_DLPF_BW_42); // 42Hz cutoff
+  // mpu.reset();
+  // mpu.initialize();
 
   Serial.println(F("Testing MPU6050 connection..."));
   if(mpu.testConnection() == false){
@@ -394,43 +471,19 @@ void setup() {
   } else {
     Serial.println("MPU6050 connection successful");
   }
+  filter.begin(50); // 50Hz update rate (adjust based on your loop frequency)
+  
+  lastFilterUpdate = millis();
+  Serial.println("MPU6050 and Madgwick filter ready!");
 
-  // Load and configure DMP
-  Serial.println(F("Initializing DMP..."));
-  devStatus = mpu.dmpInitialize();
+  Serial.println("Updating internal sensor offsets...\n");
+  manualCalibrateGyro();
 
-  //wdt_reset();
+  //MPU6050_Zero
 
-  if (devStatus == 0) {   
-    Serial.println("These are the Active offsets: ");
-    mpu.PrintActiveOffsets();
-    //wdt_reset();
-    
-      
-    Serial.println(F("Enabling DMP..."));   //Turning ON DMP
-    mpu.setDMPEnabled(true);
-
-    Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
-    Serial.print(digitalPinToInterrupt(interrupt_pin));
-    Serial.println(F(")..."));
-    attachInterrupt(digitalPinToInterrupt(interrupt_pin), dmpDataReady, RISING);
-    packetSize = mpu.dmpGetFIFOPacketSize();
-    dmpReady = true;
-    Serial.println(F("DMP ready!"));
-   
-    //extra
-    mpuIntStatus = mpu.getIntStatus();
-    
-  } else {
-    Serial.print("DMP Init failed (code ");
-    Serial.print(devStatus);
-    Serial.println(F(")"));
-    // 1 = initial memory load failed
-    // 2 = DMP configuration updates failed
-  }
+  //DMP removed
 
   //NRF24L01 SETUP
-  //wdt_reset();
   radio.begin();
 
   if (!radio.isChipConnected()) {
@@ -445,6 +498,15 @@ void setup() {
   radio.openWritingPipe(pipeTX);
   radio.openReadingPipe(1, pipeRX);
   radio.startListening();
+
+  //ATTACH SURFACES AND MOTOR
+  failsafe();
+  servoAilL.attach(6);
+  servoAilR.attach(7);
+  servoElev.attach(4);
+  servoRudd.attach(5);
+  esc.attach(15);
+  applyControls(lastGoodControl);
 
   wdt_enable(WDTO_2S);
 }
@@ -485,30 +547,19 @@ void loop() {
   }
 
   //get MPU6050 data
-  if (readMPU(yaw, pitch, roll, aRealX, aRealY, aRealZ)) {
+  if (readMPU(yaw, pitch, roll, accelX, accelY, accelZ)) {
     latestYaw = yaw;
     latestPitch = pitch;
     latestRoll = roll;
-    latestRealX = aRealX;
-    latestRealY = aRealY;
-    latestRealZ = aRealZ;
+    latestAccelX = accelX;
+    latestAccelY = accelY;
+    latestAccelZ = accelZ;
   } else {
     //Wire.clearWireTimeoutFlag();
-    Serial.println("Failed data read");
+    Serial.println("Failed data read somehow.");
   }
 
-  if (Wire.getWireTimeoutFlag()) {
-    Serial.print("MPU TIMEOUT");
-    // mpu.resetFIFO(); //added
-    // clearI2CBus();
-    mpu.reset();
-    mpu.initialize();
-    // mpu.reset();
-    // mpu.setSleepEnabled(true);
-    // mpu.setSleepEnabled(false);
-    // mpu.initialize();
-    Wire.clearWireTimeoutFlag();
-  }
+  //Wire timeout gone
 
   // Send telemetry at ~20Hz
   if (now - lastSendTime >= interval) {
@@ -530,11 +581,18 @@ void loop() {
     // Serial.println(" | ");
 
 
+    // telemetry.throttleActual = lastGoodControl.throttle;
+    // telemetry.aileronLActual = lastGoodControl.aileronL;
+    // telemetry.aileronRActual = lastGoodControl.aileronR;
+    // telemetry.elevatorActual = lastGoodControl.elevator;
+    // telemetry.rudderActual = lastGoodControl.rudder;
+
+    //Actual values applied to servos directly.
     telemetry.throttleActual = lastGoodControl.throttle;
-    telemetry.aileronLActual = lastGoodControl.aileronL;
-    telemetry.aileronRActual = lastGoodControl.aileronR;
-    telemetry.elevatorActual = lastGoodControl.elevator;
-    telemetry.rudderActual = lastGoodControl.rudder;
+    telemetry.aileronLActual = finalAileronL;  // Send actual servo positions
+    telemetry.aileronRActual = finalAileronR;
+    telemetry.elevatorActual = finalElevator;
+    telemetry.rudderActual = finalRudder;
 
     telemetry.checksum = calculateChecksum((uint8_t*)&telemetry, sizeof(telemetry) - 1);
 

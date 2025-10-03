@@ -10,11 +10,11 @@ SERIAL_PORT = 'COM11'  # Change this to your Arduino's serial port
 BAUD_RATE = 115200
 
 # --- Deadzone Configuration ---
-THROTTLE_DEADZONE = 0.2  # Throttle deadzone (0.0 to 1.0)
+THROTTLE_DEADZONE = 0.5  # Throttle deadzone
 
 # --- Trim Configuration ---
 ELEVATOR_TRIM = 0  # Elevator trim adjustment (-30 to +30)
-RUDDER_TRIM = 0    # Rudder trim adjustment (-30 to +30)
+RUDDER_TRIM = 5    # Rudder trim adjustment (-30 to +30)
 
 # --- Flaps Configuration ---
 FLAPS_TAKEOFF_OFFSET = 40  # Takeoff flaps: 20 degrees down
@@ -440,6 +440,7 @@ def main():
     engine_armed = False
     flaps_state = 0  # 0 = retracted, 1 = takeoff, 2 = landing
     auto_calibration_pending = False  # Flag for one-time autostabilize=2 packet
+    rb_button_pressed = False  # Track RB button state
     
     running = True
     
@@ -487,6 +488,7 @@ def main():
                 print(f"Flaps: {flaps_names[flaps_state]}")
             a_button_pressed_last_frame = a_button_pressed
 
+
             # Handle L1 button for auto calibration (autostabilize = 2 for one packet)
             l1_button_pressed = xboxController.get_button(4)  # L1 button is typically button 4
             if l1_button_pressed and not l1_button_pressed_last_frame:
@@ -494,6 +496,9 @@ def main():
                 auto_calibration_pending = True
                 print("Auto calibration sent")
             l1_button_pressed_last_frame = l1_button_pressed
+
+            # Handle RB button for autostabilize = 3 while held
+            rb_button_pressed = xboxController.get_button(5)  # RB button is typically button 5
 
             # Map controller inputs to aircraft controls
             # Roll: Left stick X (-60 to +60 degrees) ALTERED FOR NOW
@@ -545,9 +550,12 @@ def main():
             # If engine is disarmed, force throttle to 0
             throttle = int(throttle_rate) if engine_armed else 0
 
+
             # Determine autostabilize value for this packet
             autostabilize_to_send = autostabilize
-            if auto_calibration_pending:
+            if rb_button_pressed:
+                autostabilize_to_send = 3
+            elif auto_calibration_pending:
                 autostabilize_to_send = 2
                 auto_calibration_pending = False  # Reset flag after one packet
 

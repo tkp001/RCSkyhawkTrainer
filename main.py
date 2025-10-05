@@ -460,8 +460,8 @@ def main():
             # Read Xbox controller axes
             left_stick_x = xboxController.get_axis(0)    # Roll input
             left_stick_y = xboxController.get_axis(1)    # Pitch input
-            right_stick_x = xboxController.get_axis(2)   # Yaw input
-            right_stick_y = xboxController.get_axis(3)   # Throttle rate input
+            right_stick_x = -xboxController.get_axis(2)   # Yaw input
+            right_stick_y = -xboxController.get_axis(3)   # Throttle rate input
 
             # Handle X button for autostabilization toggle
             x_button_pressed = xboxController.get_button(2)  # X button is typically button 2

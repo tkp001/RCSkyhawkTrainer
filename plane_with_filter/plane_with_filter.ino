@@ -305,9 +305,9 @@ void applyControls(const ControlPacket &c) {
       
       // Mix manual input with stabilization (stab can do up to 15-30 deg auto)
       //Aileron mapping is correct, it has worked through testing
-      finalAileronL = c.aileronL + constrain(rollCorrection, -45, 45);
-      finalAileronR = c.aileronR + constrain(rollCorrection, -45, 45); // changed
-      finalElevator = c.elevator + constrain(pitchCorrection, -30, 30);
+      finalAileronL = c.aileronL - constrain(rollCorrection, -45, 45);
+      finalAileronR = c.aileronR - constrain(rollCorrection, -45, 45); // changed
+      finalElevator = c.elevator - constrain(pitchCorrection, -30, 30);
       //finalRudder = c.rudder + constrain(yawCorrection, -15, 15);
       
       rollPID.lastTime = currentTime;

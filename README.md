@@ -1,5 +1,5 @@
 # RCSkyhawkTrainer
-Building and coding a medium sized RC 172 Cessna Skyhawk Model (Tailwheel Mod) from scratch using an Arduino and Foamboard.
+Building and coding a medium sized RC 172 Cessna Skyhawk Model from scratch using an Arduino and Foamboard.
 
 ## Project Process
 1. Plan everything (Materials, blueprint, wiring)
